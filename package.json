@@ -1,6 +1,6 @@
 {
   "name": "maplibre-font-maker-node",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Generate MapLibre-compatible glyph PBF files in memory from TTF, OTF, WOFF, or WOFF2 font bytes.",
   "type": "module",
   "main": "./dist/index.js",
