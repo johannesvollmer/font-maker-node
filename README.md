@@ -5,7 +5,7 @@ A TypeScript library for generating MapLibre-compatible glyph PBF files in memor
 ## Usage
 
 ```ts
-import { generateGlyphPbfFiles, latinRanges } from 'maplibre-font-pbf';
+import { generateGlyphPbfFiles, latinRanges } from 'font-maker-node';
 
 const files = await generateGlyphPbfFiles({
   fontstack: 'Barlow Regular',
