@@ -11,6 +11,9 @@
       "import": "./dist/index.js"
     }
   },
+  "bin": {
+    "maplibre-font-maker-node": "./dist/cli.js"
+  },
   "files": [
     "dist",
     "maplibre-font-maker",

@@ -1,4 +1,4 @@
-# font-maker-node
+# maplibre-font-maker-node
 
 A TypeScript library for generating MapLibre-compatible glyph PBF files in memory from TTF, OTF, WOFF, or WOFF2 font bytes. 
 Variable fonts are supported, but a specific instantiation must be chosen, so you should supply a value for each axis. 
@@ -6,7 +6,7 @@ Variable fonts are supported, but a specific instantiation must be chosen, so yo
 ## Usage
 
 ```ts
-import { generateGlyphPbfFiles, latinRanges } from 'font-maker-node';
+import { generateGlyphPbfFiles, latinRanges } from 'maplibre-font-maker-node';
 
 const files = await generateGlyphPbfFiles({
   fontstack: 'Barlow Regular',
@@ -32,6 +32,46 @@ The result is an array of in-memory files:
 ```
 
 The caller is responsible for writing files to disk if desired. The public API does not read font files or write output files. The only filesystem access performed by the library is loading the vendored `maplibre-font-maker/sdfglyph.js` and `maplibre-font-maker/sdfglyph.wasm` runtime files during initialization.
+
+## CLI
+
+The same package ships a thin command-line wrapper around `generateGlyphPbfFiles`. It reads a font file, generates the glyphs, and writes them to disk.
+
+```bash
+npx maplibre-font-maker-node \
+    --font ./fonts/Barlow-Regular.ttf \
+    --fontstack "Barlow Regular" \
+    --output ./dist/fonts \
+    --ranges latin
+```
+
+This writes the MapLibre-ready layout `<output>/<fontstack>/<start>-<end>.pbf`, e.g. `./dist/fonts/Barlow Regular/0-255.pbf` — exactly the `{fontstack}/{range}.pbf` structure MapLibre's `glyphs` URL expects. Output directories are created automatically.
+
+| Option | Description |
+| --- | --- |
+| `--font <path>` | Input font file (TTF, OTF, WOFF, or WOFF2). Required. |
+| `--fontstack <name>` | MapLibre font stack name. Required. |
+| `--output <dir>` | Output directory. Required. |
+| `--ranges <preset>` | Glyph range preset: `basic-latin`, `latin`, or `all-bmp`. Default: `latin`. |
+| `--force` | Overwrite existing output files. Without it, the command fails if any target file already exists. |
+| `--help` | Show usage. |
+| `--version` | Show the package version. |
+
+The CLI exits with code `1` on any failure (missing argument, font not found, invalid preset, generation error), so it fails the surrounding script in CI.
+
+### Use it as a build step
+
+Because npm exposes the binary on `node_modules/.bin`, you can call it by name from a downstream project's lifecycle scripts to generate glyphs into your build output:
+
+```json
+{
+  "scripts": {
+    "prebuild": "maplibre-font-maker-node --font ./fonts/Barlow-Regular.ttf --fontstack \"Barlow Regular\" --output ./dist/fonts --ranges latin --force"
+  }
+}
+```
+
+`prebuild` runs automatically before `build`. Use `--force` so repeated builds don't fail on already-generated files. Each invocation handles one font; chain multiple commands with `&&` for several font stacks.
 
 ## API
 
