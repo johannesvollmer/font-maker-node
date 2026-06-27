@@ -1,6 +1,7 @@
 # maplibre-font-pbf
 
-A TypeScript library for generating MapLibre-compatible glyph PBF files in memory from TTF, OTF, WOFF, or WOFF2 font bytes. WOFF and WOFF2 inputs are detected from their first four magic bytes and normalized internally before glyph generation.
+A TypeScript library for generating MapLibre-compatible glyph PBF files in memory from TTF, OTF, WOFF, or WOFF2 font bytes. 
+Variable fonts are supported, but a specific instantiation must be chosen, so you should supply a value for each axis. 
 
 ## Usage
 
