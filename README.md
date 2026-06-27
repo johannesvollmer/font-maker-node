@@ -1,4 +1,4 @@
-# maplibre-font-pbf
+# font-maker-node
 
 A TypeScript library for generating MapLibre-compatible glyph PBF files in memory from TTF, OTF, WOFF, or WOFF2 font bytes. 
 Variable fonts are supported, but a specific instantiation must be chosen, so you should supply a value for each axis. 
