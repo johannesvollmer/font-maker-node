@@ -95,11 +95,7 @@ describe('generateGlyphPbfFiles', () => {
   });
 
   it('applies per-font variation settings while normalizing WOFF2 input', async () => {
-    const interWoff2Url = new URL(
-      '../node_modules/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2',
-      import.meta.url,
-    );
-    const interWoff2 = new Uint8Array(await readFile(interWoff2Url));
+    const interWoff2 = new Uint8Array(await readFile(new URL('Inter-Variable.woff2', fixturesUrl)));
 
     expect(getSignature(interWoff2)).toBe('wOF2');
 
