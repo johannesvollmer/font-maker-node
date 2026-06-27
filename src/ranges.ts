@@ -1,4 +1,7 @@
-import type { GlyphRange } from './types.js';
+export interface GlyphRange {
+  start: number;
+  end: number;
+}
 
 const RANGE_SIZE = 256;
 const BMP_END = 0xffff;

@@ -1,5 +1,3 @@
-import type { FontMakerModule, Pointer } from './sdfglyph-module.js';
-
 export function allocateBytes(module: FontMakerModule, bytes: Uint8Array): Pointer {
   const ptr = module._malloc(bytes.byteLength);
 

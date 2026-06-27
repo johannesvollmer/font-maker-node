@@ -2,8 +2,6 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 
-import type { FontMakerModule } from './sdfglyph-module.js';
-
 let loadPromise: Promise<FontMakerModule> | undefined;
 
 export async function loadFontMaker(): Promise<FontMakerModule> {
@@ -12,10 +10,10 @@ export async function loadFontMaker(): Promise<FontMakerModule> {
 }
 
 async function loadFontMakerFresh(): Promise<FontMakerModule> {
-  const vendorDirUrl = new URL('../../vendor/', import.meta.url);
+  const vendorDirUrl = new URL('../../maplibre-font-maker/', import.meta.url);
   const glueUrl = new URL('sdfglyph.js', vendorDirUrl);
   const wasmUrl = new URL('sdfglyph.wasm', vendorDirUrl);
-  const webAssembly = (globalThis as unknown as { WebAssembly: unknown }).WebAssembly;
+  const { WebAssembly } = globalThis as typeof globalThis & { WebAssembly: object };
 
   const [glueSource, wasmBinary] = await Promise.all([
     readFile(glueUrl, 'utf8'),
@@ -67,7 +65,7 @@ async function loadFontMakerFresh(): Promise<FontMakerModule> {
       clearInterval,
       TextDecoder,
       TextEncoder,
-      WebAssembly: webAssembly,
+      WebAssembly,
     });
 
     try {
@@ -91,14 +89,16 @@ function isInitializedModule(module: Partial<FontMakerModule>): module is FontMa
   );
 }
 
-function isUint8ArrayLike(value: unknown): value is Uint8Array {
+// The HEAPU8 typed array is created inside the vm sandbox, so it is not an
+// `instanceof` the host realm's Uint8Array. Duck-type it instead.
+function isUint8ArrayLike(value: Uint8Array | undefined): value is Uint8Array {
   return (
     typeof value === 'object' &&
     value !== null &&
     'buffer' in value &&
     'byteLength' in value &&
     'BYTES_PER_ELEMENT' in value &&
-    (value as { BYTES_PER_ELEMENT: unknown }).BYTES_PER_ELEMENT === 1
+    value.BYTES_PER_ELEMENT === 1
   );
 }
 

@@ -31,7 +31,7 @@ The result is an array of in-memory files:
 ];
 ```
 
-The caller is responsible for writing files to disk if desired. The public API does not read font files or write output files. The only filesystem access performed by the library is loading the vendored `vendor/sdfglyph.js` and `vendor/sdfglyph.wasm` runtime files during initialization.
+The caller is responsible for writing files to disk if desired. The public API does not read font files or write output files. The only filesystem access performed by the library is loading the vendored `maplibre-font-maker/sdfglyph.js` and `maplibre-font-maker/sdfglyph.wasm` runtime files during initialization.
 
 ## API
 
@@ -67,20 +67,4 @@ const files = await generateGlyphPbfFiles({
 
 ## Vendored runtime
 
-The vendored runtime files are generated artifacts from MapLibre `font-maker`:
-
-- Source repository: `https://github.com/maplibre/font-maker`
-- Source commit inspected for the wrapper API: `c56771948c59a01b89d0498d47dc4abf56c25338`
-- Published artifacts used here:
-  - `https://maplibre.org/font-maker/sdfglyph.js`
-  - `https://maplibre.org/font-maker/sdfglyph.wasm`
-- `vendor/sdfglyph.js` SHA-256: `2D5CCE9E20511E3E1798A696B496CFB4FB9C55CD9CCEAA73FD77849E1C3D7A64`
-- `vendor/sdfglyph.wasm` SHA-256: `DE2986E66201499DE76F21BB3A649E1F27D7D68AF21CB2616DC3A7B25BADE691`
-
-The upstream BSD-3-Clause license is included at `vendor/LICENSE.font-maker`.
-
-To rebuild the runtime from upstream, install Emscripten and Boost headers, initialize upstream submodules, then run:
-
-```sh
-./build_wasm.sh /path/to/boost
-```
+This library wraps the MapLibre `font-maker` WebAssembly runtime, which is vendored under [`maplibre-font-maker/`](./maplibre-font-maker/README.md). See that directory's README for its source, checksums, and rebuild instructions.

@@ -1,12 +1,15 @@
-import { createRequire } from 'node:module';
+import { instantiateVariableFont, subset } from '@web-alchemy/fonttools';
 
-import type { FontInput, FontVariationSettings } from './types.js';
+export type FontVariationSettings = Record<string, number>;
+
+export interface FontInput {
+  name: string;
+  bytes: Uint8Array;
+  settings?: FontVariationSettings;
+}
 
 const WOFF_SIGNATURE = 'wOFF';
 const WOFF2_SIGNATURE = 'wOF2';
-
-const require = createRequire(import.meta.url);
-const { instantiateVariableFont, subset } = require('@web-alchemy/fonttools') as FontToolsModule;
 
 export function isSupportedFontInput(bytes: Uint8Array): boolean {
   return hasSupportedSfntSignature(bytes) || isWoff(bytes) || isWoff2(bytes);
@@ -29,7 +32,10 @@ export async function normalizeFontInput(font: FontInput): Promise<FontInput> {
   };
 }
 
-export function validateFontVariationSettings(settings: unknown, path: string): FontVariationSettings | undefined {
+export function validateFontVariationSettings(
+  settings: FontVariationSettings | undefined,
+  path: string,
+): FontVariationSettings | undefined {
   if (settings === undefined) {
     return undefined;
   }
@@ -108,9 +114,4 @@ function getSignature(bytes: Uint8Array): string {
 
 function isAxisTag(value: string): boolean {
   return /^[\x20-\x7e]{4}$/.test(value);
-}
-
-interface FontToolsModule {
-  instantiateVariableFont(inputFontBuffer: Uint8Array, options: FontVariationSettings): Promise<Uint8Array>;
-  subset(inputFontBuffer: Uint8Array, options: Record<string, string | boolean>): Promise<Uint8Array>;
 }
