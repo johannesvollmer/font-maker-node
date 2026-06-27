@@ -1,7 +1,7 @@
-import { createRequire } from 'node:module';
 import { readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
 
+import { subset } from '@web-alchemy/fonttools';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -12,11 +12,7 @@ import {
   range256,
 } from '../src/index.js';
 
-const require = createRequire(import.meta.url);
 const fixturesUrl = new URL('./fixtures/', import.meta.url);
-const fonttools = require('@web-alchemy/fonttools') as {
-  subset(inputFontBuffer: Uint8Array, options: Record<string, string | boolean>): Promise<Uint8Array>;
-};
 
 describe('range helpers', () => {
   it('creates aligned MapLibre glyph ranges', () => {
@@ -73,8 +69,8 @@ describe('generateGlyphPbfFiles', () => {
   it('automatically normalizes WOFF and WOFF2 font bytes before generation', async () => {
     const ttfBytes = new Uint8Array(await readFile(new URL('Barlow-Regular.ttf', fixturesUrl)));
     const [woffBytes, woff2Bytes] = await Promise.all([
-      fonttools.subset(ttfBytes, { '*': true, flavor: 'woff' }),
-      fonttools.subset(ttfBytes, { '*': true, flavor: 'woff2' }),
+      subset(ttfBytes, { '*': true, flavor: 'woff' }),
+      subset(ttfBytes, { '*': true, flavor: 'woff2' }),
     ]);
 
     expect(getSignature(woffBytes)).toBe('wOFF');
@@ -99,8 +95,11 @@ describe('generateGlyphPbfFiles', () => {
   });
 
   it('applies per-font variation settings while normalizing WOFF2 input', async () => {
-    const interWoff2Path = require.resolve('@fontsource-variable/inter/files/inter-latin-wght-normal.woff2');
-    const interWoff2 = new Uint8Array(await readFile(interWoff2Path));
+    const interWoff2Url = new URL(
+      '../node_modules/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2',
+      import.meta.url,
+    );
+    const interWoff2 = new Uint8Array(await readFile(interWoff2Url));
 
     expect(getSignature(interWoff2)).toBe('wOF2');
 

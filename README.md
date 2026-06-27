@@ -65,6 +65,6 @@ const files = await generateGlyphPbfFiles({
 
 `fonts[].settings` is optional. When present, each key must be a 4-character OpenType variation-axis tag and each value must be the fixed numeric axis value to instantiate. Unspecified axes are pinned to the font's default values when a variable font is normalized. WOFF inputs start with `77 4F 46 46` (`wOFF`), and WOFF2 inputs start with `77 4F 46 32` (`wOF2`).
 
-## Vendored runtime
+## We use [font-maker](https://github.com/maplibre/font-maker) internally
 
 This library wraps the MapLibre `font-maker` WebAssembly runtime, which is vendored under [`maplibre-font-maker/`](./maplibre-font-maker/README.md). See that directory's README for its source, checksums, and rebuild instructions.
