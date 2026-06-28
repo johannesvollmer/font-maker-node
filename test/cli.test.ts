@@ -77,7 +77,7 @@ describe('cli', () => {
       '--force',
     ]);
 
-    expect((await readdir(fontstackDirectory)).sort()).toEqual(['0-255.pbf']);
+    expect((await readdir(fontstackDirectory)).sort()).toEqual(['0-255.pbf', 'fontstack.yaml']);
     expect((await readdir(output)).sort()).toEqual(['Barlow Regular', 'Legacy Stack', 'unrelated.txt']);
     expect(await readFile(join(output, 'unrelated.txt'), 'utf8')).toBe('keep');
     expect(await readFile(join(output, 'Legacy Stack', '0-255.pbf'), 'utf8')).toBe('keep');
@@ -109,7 +109,7 @@ describe('cli', () => {
 
     await run(['--font', barlowPath, '--fontstack', 'Barlow Regular', '--output', output, '--ranges', 'basic-latin']);
 
-    expect((await readdir(join(output, 'Barlow Regular'))).sort()).toEqual(['0-255.pbf']);
+    expect((await readdir(join(output, 'Barlow Regular'))).sort()).toEqual(['0-255.pbf', 'fontstack.yaml']);
     expect(await readFile(join(output, 'unrelated.txt'), 'utf8')).toBe('keep');
   });
 

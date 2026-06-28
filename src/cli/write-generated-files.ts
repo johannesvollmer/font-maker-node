@@ -3,30 +3,22 @@ import { dirname, join } from 'node:path';
 
 import type { GeneratedGlyphPbfFile } from '../index.js';
 
-export interface WriteOptions {
-  force: boolean;
+export async function isFontstackDirNonEmpty(fontstackDirectory: string): Promise<boolean> {
+  return (await readDirectoryEntries(fontstackDirectory)).length > 0;
 }
 
-export async function writeGeneratedFiles(
+export async function clearFontstackDir(fontstackDirectory: string): Promise<void> {
+  const entries = await readDirectoryEntries(fontstackDirectory);
+
+  await Promise.all(
+    entries.map((entry) => rm(join(fontstackDirectory, entry), { recursive: true, force: true })),
+  );
+}
+
+export async function writeFiles(
   files: GeneratedGlyphPbfFile[],
   outputDirectory: string,
-  fontstack: string,
-  { force }: WriteOptions,
 ): Promise<void> {
-  const fontstackDirectory = join(outputDirectory, fontstack);
-  const existingEntries = await readDirectoryEntries(fontstackDirectory);
-
-  if (existingEntries.length > 0) {
-    if (!force) {
-      throw new Error(
-        `Refusing to write to non-empty font stack directory: ${fontstackDirectory}. ` +
-          'Pass --force to replace its contents.',
-      );
-    }
-
-    await clearDirectoryEntries(fontstackDirectory, existingEntries);
-  }
-
   for (const file of files) {
     const path = join(outputDirectory, file.filename);
     await mkdir(dirname(path), { recursive: true });
@@ -44,12 +36,6 @@ async function readDirectoryEntries(directory: string): Promise<string[]> {
 
     throw error;
   }
-}
-
-async function clearDirectoryEntries(directory: string, entries: string[]): Promise<void> {
-  await Promise.all(
-    entries.map((entry) => rm(join(directory, entry), { recursive: true, force: true })),
-  );
 }
 
 function isErrnoException(error: unknown): error is NodeJS.ErrnoException {

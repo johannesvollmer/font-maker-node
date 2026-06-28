@@ -53,11 +53,17 @@ This writes the MapLibre-ready layout `<output>/<fontstack>/<start>-<end>.pbf`, 
 | `--fontstack <name>` | MapLibre font stack name. Required. |
 | `--output <dir>` | Output directory. Required. |
 | `--ranges <preset>` | Glyph range preset: `basic-latin`, `latin`, or `all-bmp`. Default: `latin`. |
-| `--force` | Overwrite existing output files. Without it, the command fails if any target file already exists. |
+| `--force` | Regenerate even when the cached output is already up to date. |
 | `--help` | Show usage. |
 | `--version` | Show the package version. |
 
 The CLI exits with code `1` on any failure (missing argument, font not found, invalid preset, generation error), so it fails the surrounding script in CI.
+
+### Caching
+
+Each run writes a `fontstack.yaml` manifest into `<output>/<fontstack>/` recording the font hash, fontstack, ranges, tool version, and a hash of every generated file. On the next run the command **skips generation** when all of those are unchanged and every output file is still intact, and **regenerates automatically** when any input changes or an output file is missing or modified. Pass `--force` to regenerate unconditionally.
+
+For safety, the command **refuses to write into a non-empty fontstack folder that has no manifest** (i.e. content it didn't create) unless you pass `--force`. Other files and folders in the output directory — including other fontstacks — are never touched.
 
 ### Use it as a build step
 
@@ -66,12 +72,12 @@ Because npm exposes the binary on `node_modules/.bin`, you can call it by name f
 ```json
 {
   "scripts": {
-    "prebuild": "maplibre-font-maker-node --font ./fonts/Barlow-Regular.ttf --fontstack \"Barlow Regular\" --output ./dist/fonts --ranges latin --force"
+    "prebuild": "maplibre-font-maker-node --font ./fonts/Barlow-Regular.ttf --fontstack \"Barlow Regular\" --output ./dist/fonts --ranges latin"
   }
 }
 ```
 
-`prebuild` runs automatically before `build`. Use `--force` so repeated builds don't fail on already-generated files. Each invocation handles one font; chain multiple commands with `&&` for several font stacks.
+`prebuild` runs automatically before `build`. Thanks to the manifest cache, repeated builds are a fast no-op when the font and options are unchanged, and regenerate automatically when you swap the font or change the ranges — no `--force` needed. Each invocation handles one font; chain multiple commands with `&&` for several font stacks.
 
 ## API
 
