@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -49,7 +49,68 @@ describe('cli', () => {
 
     await expect(
       run(['--font', barlowPath, '--fontstack', 'Barlow Regular', '--output', output, '--ranges', 'basic-latin']),
-    ).rejects.toThrow('Refusing to overwrite');
+    ).rejects.toThrow('Refusing to write to non-empty font stack directory');
+  });
+
+  it('removes stale range files when --force generates fewer ranges, leaving siblings untouched', async () => {
+    const { run } = await import('../src/cli.js');
+    const output = join(workDir, 'output');
+    const fontstackDirectory = join(output, 'Barlow Regular');
+    await mkdir(fontstackDirectory, { recursive: true });
+    await writeFile(join(fontstackDirectory, '0-255.pbf'), 'stale');
+    await writeFile(join(fontstackDirectory, '256-511.pbf'), 'stale');
+    await writeFile(join(fontstackDirectory, '512-767.pbf'), 'stale');
+
+    await writeFile(join(output, 'unrelated.txt'), 'keep');
+    await mkdir(join(output, 'Legacy Stack'));
+    await writeFile(join(output, 'Legacy Stack', '0-255.pbf'), 'keep');
+
+    await run([
+      '--font',
+      barlowPath,
+      '--fontstack',
+      'Barlow Regular',
+      '--output',
+      output,
+      '--ranges',
+      'basic-latin',
+      '--force',
+    ]);
+
+    expect((await readdir(fontstackDirectory)).sort()).toEqual(['0-255.pbf']);
+    expect((await readdir(output)).sort()).toEqual(['Barlow Regular', 'Legacy Stack', 'unrelated.txt']);
+    expect(await readFile(join(output, 'unrelated.txt'), 'utf8')).toBe('keep');
+    expect(await readFile(join(output, 'Legacy Stack', '0-255.pbf'), 'utf8')).toBe('keep');
+  });
+
+  it('fails without --force before writing when the font stack directory is not empty', async () => {
+    const { run } = await import('../src/cli.js');
+    const output = join(workDir, 'output');
+    const fontstackDirectory = join(output, 'Barlow Regular');
+    await mkdir(fontstackDirectory, { recursive: true });
+    await writeFile(join(fontstackDirectory, 'leftover.pbf'), 'stale');
+
+    await writeFile(join(output, 'unrelated.txt'), 'keep');
+
+    await expect(
+      run(['--font', barlowPath, '--fontstack', 'Barlow Regular', '--output', output, '--ranges', 'basic-latin']),
+    ).rejects.toThrow('Refusing to write to non-empty font stack directory');
+
+    expect((await readdir(fontstackDirectory)).sort()).toEqual(['leftover.pbf']);
+    expect(await readFile(join(output, 'unrelated.txt'), 'utf8')).toBe('keep');
+  });
+
+  it('writes without --force when the font stack directory is empty even if siblings exist', async () => {
+    const { run } = await import('../src/cli.js');
+    const output = join(workDir, 'output');
+    await mkdir(output, { recursive: true });
+    await writeFile(join(output, 'unrelated.txt'), 'keep');
+    await mkdir(join(output, 'Other Stack'));
+
+    await run(['--font', barlowPath, '--fontstack', 'Barlow Regular', '--output', output, '--ranges', 'basic-latin']);
+
+    expect((await readdir(join(output, 'Barlow Regular'))).sort()).toEqual(['0-255.pbf']);
+    expect(await readFile(join(output, 'unrelated.txt'), 'utf8')).toBe('keep');
   });
 
   it('overwrites existing files with --force', async () => {

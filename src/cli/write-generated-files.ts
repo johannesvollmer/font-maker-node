@@ -1,4 +1,4 @@
-import { access, mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import type { GeneratedGlyphPbfFile } from '../index.js';
@@ -10,41 +10,48 @@ export interface WriteOptions {
 export async function writeGeneratedFiles(
   files: GeneratedGlyphPbfFile[],
   outputDirectory: string,
+  fontstack: string,
   { force }: WriteOptions,
 ): Promise<void> {
-  const destinations = files.map((file) => ({
-    bytes: file.bytes,
-    path: join(outputDirectory, file.filename),
-  }));
+  const fontstackDirectory = join(outputDirectory, fontstack);
+  const existingEntries = await readDirectoryEntries(fontstackDirectory);
 
-  if (!force) {
-    const existing = await findExisting(destinations.map((destination) => destination.path));
-
-    if (existing.length > 0) {
+  if (existingEntries.length > 0) {
+    if (!force) {
       throw new Error(
-        `Refusing to overwrite ${existing.length} existing file(s). Pass --force to overwrite:\n` +
-          existing.map((path) => `  ${path}`).join('\n'),
+        `Refusing to write to non-empty font stack directory: ${fontstackDirectory}. ` +
+          'Pass --force to replace its contents.',
       );
     }
+
+    await clearDirectoryEntries(fontstackDirectory, existingEntries);
   }
 
-  for (const destination of destinations) {
-    await mkdir(dirname(destination.path), { recursive: true });
-    await writeFile(destination.path, destination.bytes);
+  for (const file of files) {
+    const path = join(outputDirectory, file.filename);
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, file.bytes);
   }
 }
 
-async function findExisting(paths: string[]): Promise<string[]> {
-  const checks = await Promise.all(
-    paths.map(async (path) => {
-      try {
-        await access(path);
-        return path;
-      } catch {
-        return undefined;
-      }
-    }),
-  );
+async function readDirectoryEntries(directory: string): Promise<string[]> {
+  try {
+    return await readdir(directory);
+  } catch (error) {
+    if (isErrnoException(error) && error.code === 'ENOENT') {
+      return [];
+    }
 
-  return checks.filter((path): path is string => path !== undefined);
+    throw error;
+  }
+}
+
+async function clearDirectoryEntries(directory: string, entries: string[]): Promise<void> {
+  await Promise.all(
+    entries.map((entry) => rm(join(directory, entry), { recursive: true, force: true })),
+  );
+}
+
+function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && 'code' in error;
 }

@@ -56,7 +56,7 @@ async function generate(options: CliOptions): Promise<void> {
     ranges,
   });
 
-  await writeGeneratedFiles(files, options.output, { force: options.force });
+  await writeGeneratedFiles(files, options.output, options.fontstack, { force: options.force });
 
   printSummary({
     fontstack: options.fontstack,
