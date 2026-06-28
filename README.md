@@ -33,70 +33,69 @@ The result is an array of in-memory files:
 
 The caller is responsible for writing files to disk if desired. The public API does not read font files or write output files. The only filesystem access performed by the library is loading the vendored `maplibre-font-maker/sdfglyph.js` and `maplibre-font-maker/sdfglyph.wasm` runtime files during initialization.
 
-## CLI
+## Use it as a build step
 
-The same package ships a thin command-line wrapper around `generateGlyphPbfFiles`. It takes a single argument: the path to a YAML config file describing what to generate.
+For generating glyphs to disk, the package exposes `buildFonts` — a higher-level wrapper around `generateGlyphPbfFiles` that reads fonts from disk, caches results, and writes the `.pbf` files. Instead of a config file, your "config" is a plain Node script, so you get loops, conditionals, and computed values for free:
 
-```bash
-npx maplibre-font-maker-node ./font-maker.config.yaml
+```js
+// generate-fonts.js  — run with: node generate-fonts.js
+import { buildFonts } from 'maplibre-font-maker-node';
+
+const weights = { Thin: 100, Regular: 400, Bold: 700 };
+
+await buildFonts({
+  output: './dist/fonts',
+  fontstacks: Object.entries(weights).map(([label, wght]) => ({
+    font: './fonts/Inter.woff2',
+    fontstack: `Inter ${label}`,
+    ranges: 'latin',           // optional: basic-latin | latin | all-bmp (default: latin)
+    axes: { wght },            // optional: variable-font axes (4-char tag -> number)
+  })),
+});
 ```
 
-The config has a shared `output` directory and a list of font stacks to generate:
+This is an ES module using top-level `await` (Node 18+ with `"type": "module"` or a `.mjs` file). In CommonJS, use `buildFonts(...).catch((error) => { console.error(error); process.exitCode = 1; })` instead.
 
-```yaml
-output: ./dist/fonts
-fontstacks:
-  - font: ./fonts/Inter.woff2
-    fontstack: Inter Bold
-    ranges: latin          # optional: basic-latin | latin | all-bmp (default: latin)
-    axes:                  # optional: variable-font axes (4-char tag -> number)
-      wght: 700
-  - font: ./fonts/Inter.woff2
-    fontstack: Inter Regular
-    axes: { wght: 400 }
-```
+`buildFonts` writes the MapLibre-ready layout `<output>/<fontstack>/<start>-<end>.pbf`, e.g. `./dist/fonts/Inter Bold/0-255.pbf` — exactly the `{fontstack}/{range}.pbf` structure MapLibre's `glyphs` URL expects. Output directories are created automatically. Relative `font` and `output` paths resolve against the process working directory.
 
-This writes the MapLibre-ready layout `<output>/<fontstack>/<start>-<end>.pbf`, e.g. `./dist/fonts/Inter Bold/0-255.pbf` — exactly the `{fontstack}/{range}.pbf` structure MapLibre's `glyphs` URL expects. Output directories are created automatically.
-
-| Field | Description |
-| --- | --- |
-| `output` | Output directory shared by all font stacks. Required. |
-| `fontstacks[].font` | Input font file (TTF, OTF, WOFF, or WOFF2). Required. |
-| `fontstacks[].fontstack` | MapLibre font stack name; also the output subfolder. Required and unique. |
-| `fontstacks[].ranges` | Glyph range preset: `basic-latin`, `latin`, or `all-bmp`. Default: `latin`. |
-| `fontstacks[].axes` | Variable-font axis settings, e.g. `{ wght: 700, wdth: 100 }`. The font is pinned to that instance before generating. Optional. |
-
-Relative `font` and `output` paths resolve against the config file's directory. The CLI also accepts `--help` and `--version`. It exits with code `1` on any failure (missing/invalid config, font not found, generation error), so it fails the surrounding script in CI.
-
-### Caching
-
-Each font stack folder gets a `fontstack.yaml` manifest recording the font hash, fontstack, ranges, axes, tool version, and a hash of every generated file. On the next run the command **skips generation** when all of those are unchanged and every output file is still intact, and **regenerates automatically** when any input changes (including a changed axis value) or an output file is missing or modified.
-
-For safety, the command **refuses to write into a non-empty fontstack folder that has no manifest** (i.e. content it didn't create); delete the folder to regenerate. Other files and folders in the output directory — including other font stacks — are never touched.
-
-### Use it as a build step
-
-Because npm exposes the binary on `node_modules/.bin`, you can call it by name from a downstream project's lifecycle scripts to generate glyphs into your build output:
+Wire it into a downstream project's lifecycle scripts:
 
 ```json
 {
   "scripts": {
-    "prebuild": "maplibre-font-maker-node ./font-maker.config.yaml"
+    "prebuild": "node ./generate-fonts.js"
   }
 }
 ```
 
-`prebuild` runs automatically before `build`. Thanks to the manifest cache, repeated builds are a fast no-op when the config and fonts are unchanged, and regenerate automatically when you swap a font or change ranges or axes. List every font stack in the one config file — no need to chain commands.
+| Option | Description |
+| --- | --- |
+| `output` | Output directory shared by all font stacks. Required. |
+| `fontstacks[].font` | Input font file path (TTF, OTF, WOFF, or WOFF2). Required. |
+| `fontstacks[].fontstack` | MapLibre font stack name; also the output subfolder. Required and unique. |
+| `fontstacks[].ranges` | Glyph range preset: `basic-latin`, `latin`, or `all-bmp`. Default: `latin`. |
+| `fontstacks[].axes` | Variable-font axis settings, e.g. `{ wght: 700, wdth: 100 }`. The font is pinned to that instance before generating. Optional. |
+
+`buildFonts` returns a per-fontstack summary (`{ fontstack, status: 'generated' | 'skipped', fileCount }[]`) and logs the same progress lines to the console. It throws (rejecting the promise) on any failure — missing/invalid options, font not found, generation error — so it fails the surrounding script in CI.
+
+### Caching
+
+Each font stack folder gets a `fontstack.yaml` manifest recording the font hash, fontstack, ranges, axes, tool version, and a hash of every generated file. On the next run `buildFonts` **skips generation** (status `skipped`) when all of those are unchanged and every output file is still intact, and **regenerates automatically** when any input changes (including a changed axis value) or an output file is missing or modified.
+
+For safety, it **refuses to write into a non-empty fontstack folder that has no manifest** (i.e. content it didn't create); delete the folder to regenerate. Other files and folders in the output directory — including other font stacks — are never touched.
 
 ## API
 
 ```ts
-generateGlyphPbfFiles(options)
+buildFonts(options)            // read fonts from disk, cache, and write .pbf files
+generateGlyphPbfFiles(options) // generate glyphs in memory, returns { filename, bytes }[]
 range256(start)
 basicLatinRanges()
 latinRanges()
 allBmpRanges()
 ```
+
+`buildFonts` is the high-level, disk-oriented entry point (see [Use it as a build step](#use-it-as-a-build-step)). `generateGlyphPbfFiles` is the lower-level core: pass font **bytes** and get the glyph PBFs back in memory, with no file I/O or caching — use it when you already hold the bytes or want to handle output yourself.
 
 `basicLatinRanges()` returns the `0-255` MapLibre glyph range. `latinRanges()` returns `0-255`, `256-511`, and `512-767`. `allBmpRanges()` returns all 256 ranges covering the BMP.
 

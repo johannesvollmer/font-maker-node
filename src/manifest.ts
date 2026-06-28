@@ -4,7 +4,7 @@ import { basename, join } from 'node:path';
 
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 
-import type { FontVariationSettings, GeneratedGlyphPbfFile } from '../index.js';
+import type { FontVariationSettings, GeneratedGlyphPbfFile } from './index.js';
 
 export const MANIFEST_FILENAME = 'fontstack.yaml';
 

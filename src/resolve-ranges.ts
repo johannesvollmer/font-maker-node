@@ -1,6 +1,6 @@
-import { allBmpRanges, basicLatinRanges, latinRanges } from '../index.js';
+import { allBmpRanges, basicLatinRanges, latinRanges } from './index.js';
 
-import type { GlyphRange } from '../index.js';
+import type { GlyphRange } from './index.js';
 
 const PRESETS: Record<string, () => GlyphRange[]> = {
   'basic-latin': basicLatinRanges,

@@ -1,7 +1,7 @@
 import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
-import type { GeneratedGlyphPbfFile } from '../index.js';
+import type { GeneratedGlyphPbfFile } from './index.js';
 
 export async function isFontstackDirNonEmpty(fontstackDirectory: string): Promise<boolean> {
   return (await readDirectoryEntries(fontstackDirectory)).length > 0;
