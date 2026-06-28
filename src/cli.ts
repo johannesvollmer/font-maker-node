@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { generateGlyphPbfFiles } from './index.js';
+import { loadConfig } from './cli/config.js';
 import {
   buildManifest,
   hasManifest,
@@ -13,7 +14,7 @@ import {
   writeManifest,
 } from './cli/manifest.js';
 import { parseCliArgs } from './cli/parse-args.js';
-import { printSummary, printUpToDate } from './cli/print-summary.js';
+import { printGenerated, printRunSummary, printUpToDate } from './cli/print-summary.js';
 import { resolveRanges } from './cli/resolve-ranges.js';
 import {
   clearFontstackDir,
@@ -21,32 +22,39 @@ import {
   writeFiles,
 } from './cli/write-generated-files.js';
 
+import type { ResolvedFontstack } from './cli/config.js';
 import type { ManifestInputs } from './cli/manifest.js';
-import type { CliOptions } from './cli/parse-args.js';
 
 const HELP_TEXT = `maplibre-font-maker-node
 
 Generate MapLibre glyph PBF files from TTF, OTF, WOFF, or WOFF2 fonts.
 
 Usage:
-  maplibre-font-maker-node \\
-      --font <file.ttf> \\
-      --fontstack "Barlow Regular" \\
-      --output ./fonts
+  maplibre-font-maker-node <config.yaml>
+
+The config is a YAML file describing a shared output directory and one or more
+font stacks to generate:
+
+  output: ./dist/fonts
+  fontstacks:
+    - font: ./fonts/Inter.woff2
+      fontstack: Inter Bold
+      ranges: latin          # optional: basic-latin | latin | all-bmp (default: latin)
+      axes:                  # optional: variable-font axes (tag -> value)
+        wght: 700
+    - font: ./fonts/Inter.woff2
+      fontstack: Inter Regular
+      axes: { wght: 400 }
+
+Relative font and output paths resolve against the config file's directory.
 
 Options:
-  --font        Input font file (required)
-  --fontstack   MapLibre font stack name (required)
-  --output      Output directory (required)
-  --ranges      Glyph range preset: basic-latin | latin | all-bmp (default: latin)
-  --force       Regenerate even if the cached output is already up to date
   --help        Show this help
   --version     Show version
 
-A "fontstack.yaml" manifest is written alongside the generated files. On reruns,
-generation is skipped when the font, fontstack, ranges, and tool version are
-unchanged and every output file is still intact; it regenerates automatically
-when any of those change.
+Each font stack folder gets a "fontstack.yaml" manifest. On reruns, generation
+is skipped when the font, ranges, axes, and tool version are unchanged and every
+output file is still intact, and regenerates automatically when any of those change.
 `;
 
 export async function run(argv: string[]): Promise<void> {
@@ -62,54 +70,77 @@ export async function run(argv: string[]): Promise<void> {
     return;
   }
 
-  await generate(parsed.options);
+  await generate(parsed.configPath);
 }
 
-async function generate(options: CliOptions): Promise<void> {
-  const fontBytes = await readFontFile(options.font);
-  const ranges = resolveRanges(options.ranges);
+async function generate(configPath: string): Promise<void> {
+  const config = await loadConfig(configPath);
+  const toolVersion = await readVersion();
 
-  const fontstackDirectory = join(options.output, options.fontstack);
+  let generated = 0;
+  let skipped = 0;
+
+  for (const entry of config.fontstacks) {
+    if (await generateFontstack(config.output, entry, toolVersion)) {
+      generated += 1;
+    } else {
+      skipped += 1;
+    }
+  }
+
+  printRunSummary(generated, skipped);
+}
+
+// Returns true when files were (re)generated, false when the cache was up to date.
+async function generateFontstack(
+  output: string,
+  entry: ResolvedFontstack,
+  toolVersion: string,
+): Promise<boolean> {
+  const fontBytes = await readFontFile(entry.fontPath);
+  const ranges = resolveRanges(entry.ranges);
+  const fontstackDirectory = join(output, entry.fontstack);
+
   const inputs: ManifestInputs = {
-    toolVersion: await readVersion(),
-    fontstack: options.fontstack,
-    ranges: options.ranges,
+    toolVersion,
+    fontstack: entry.fontstack,
+    ranges: entry.ranges,
+    axes: entry.axes,
     fontSha256: sha256(fontBytes),
   };
 
   const manifest = await readManifest(fontstackDirectory);
 
-  if (!options.force && manifest && (await isUpToDate(manifest, inputs, fontstackDirectory))) {
-    printUpToDate({ fontstack: options.fontstack, output: options.output });
-    return;
+  if (manifest && (await isUpToDate(manifest, inputs, fontstackDirectory))) {
+    printUpToDate({ fontstack: entry.fontstack, output });
+    return false;
   }
 
-  if (
-    !options.force &&
-    !(await hasManifest(fontstackDirectory)) &&
-    (await isFontstackDirNonEmpty(fontstackDirectory))
-  ) {
+  if (!(await hasManifest(fontstackDirectory)) && (await isFontstackDirNonEmpty(fontstackDirectory))) {
     throw new Error(
       `Refusing to write to non-empty font stack directory: ${fontstackDirectory}. ` +
-        'Pass --force to replace its contents.',
+        'Delete it to regenerate.',
     );
   }
 
   const files = await generateGlyphPbfFiles({
-    fontstack: options.fontstack,
-    fonts: [{ name: options.fontstack, bytes: fontBytes }],
+    fontstack: entry.fontstack,
+    fonts: [
+      {
+        name: entry.fontstack,
+        bytes: fontBytes,
+        settings: Object.keys(entry.axes).length > 0 ? entry.axes : undefined,
+      },
+    ],
     ranges,
   });
 
   await clearFontstackDir(fontstackDirectory);
-  await writeFiles(files, options.output);
+  await writeFiles(files, output);
   await writeManifest(fontstackDirectory, buildManifest(inputs, files));
 
-  printSummary({
-    fontstack: options.fontstack,
-    fileCount: files.length,
-    output: options.output,
-  });
+  printGenerated({ fontstack: entry.fontstack, fileCount: files.length, output });
+  return true;
 }
 
 async function readFontFile(path: string): Promise<Uint8Array> {

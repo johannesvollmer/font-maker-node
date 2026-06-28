@@ -1,8 +1,9 @@
-import { access, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { stringify as stringifyYaml } from 'yaml';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { readManifest, writeManifest } from '../src/cli/manifest.js';
@@ -38,48 +39,67 @@ async function loadCli(): Promise<{ run: (argv: string[]) => Promise<void>; gene
   return { run, generate: index.generateGlyphPbfFiles as unknown as Mock };
 }
 
-function argsFor(output: string, extra: string[] = []): string[] {
-  return [
-    '--font',
-    barlowPath,
-    '--fontstack',
-    'Barlow Regular',
-    '--output',
-    output,
-    '--ranges',
-    'basic-latin',
-    ...extra,
-  ];
+async function writeConfig(overrides: Record<string, unknown> = {}): Promise<string> {
+  const path = join(workDir, 'config.yaml');
+  await writeFile(
+    path,
+    stringifyYaml({
+      output: join(workDir, 'output'),
+      fontstacks: [{ font: barlowPath, fontstack: 'Barlow Regular', ranges: 'basic-latin', ...overrides }],
+    }),
+  );
+  return path;
+}
+
+function fontstackDir(): string {
+  return join(workDir, 'output', 'Barlow Regular');
 }
 
 describe('cli caching', () => {
   it(
-    'writes a manifest describing the inputs and generated files',
+    'writes a manifest with an empty axes block when no axes are given',
     async () => {
       const { run } = await loadCli();
-      const output = join(workDir, 'output');
+      const config = await writeConfig();
 
-      await run(argsFor(output));
+      await run([config]);
 
-      const manifest = await readManifest(join(output, 'Barlow Regular'));
+      const manifest = await readManifest(fontstackDir());
       expect(manifest).not.toBeNull();
-      expect(manifest!.tool).toBe('maplibre-font-maker-node');
       expect(manifest!.fontstack).toBe('Barlow Regular');
       expect(manifest!.ranges).toBe('basic-latin');
-      expect(typeof manifest!.fontSha256).toBe('string');
+      expect(manifest!.axes).toEqual({});
       expect(Object.keys(manifest!.files)).toEqual(['0-255.pbf']);
     },
     20000,
   );
 
+  it('records axis values in the manifest', async () => {
+    const generateGlyphPbfFiles = vi.fn(async (options: { fontstack: string }) => [
+      { filename: `${options.fontstack}/0-255.pbf`, bytes: new Uint8Array([1, 2, 3]) },
+    ]);
+    vi.doMock('../src/index.js', async (importActual) => {
+      const actual = await importActual<typeof import('../src/index.js')>();
+      return { ...actual, generateGlyphPbfFiles };
+    });
+
+    const { run } = await import('../src/cli.js');
+    const config = await writeConfig({ axes: { wght: 700, wdth: 100 } });
+
+    await run([config]);
+
+    const manifest = await readManifest(fontstackDir());
+    expect(manifest!.axes).toEqual({ wght: 700, wdth: 100 });
+  });
+
   it(
     'skips regeneration on a second identical run',
     async () => {
       const { run, generate } = await loadCli();
-      const output = join(workDir, 'output');
+      const config = await writeConfig();
 
-      await run(argsFor(output));
-      await run(argsFor(output));
+      await run([config]);
+      await run([config]);
 
       expect(generate).toHaveBeenCalledTimes(1);
     },
@@ -90,14 +110,13 @@ describe('cli caching', () => {
     'regenerates when the input font hash changes',
     async () => {
       const { run, generate } = await loadCli();
-      const output = join(workDir, 'output');
-      const fontstackDirectory = join(output, 'Barlow Regular');
+      const config = await writeConfig();
 
-      await run(argsFor(output));
-      const manifest = await readManifest(fontstackDirectory);
-      await writeManifest(fontstackDirectory, { ...manifest!, fontSha256: 'deadbeef' });
+      await run([config]);
+      const manifest = await readManifest(fontstackDir());
+      await writeManifest(fontstackDir(), { ...manifest!, fontSha256: 'deadbeef' });
 
-      await run(argsFor(output));
+      await run([config]);
 
       expect(generate).toHaveBeenCalledTimes(2);
     },
@@ -108,14 +127,13 @@ describe('cli caching', () => {
     'regenerates when the requested ranges change',
     async () => {
       const { run, generate } = await loadCli();
-      const output = join(workDir, 'output');
-      const fontstackDirectory = join(output, 'Barlow Regular');
+      const config = await writeConfig();
 
-      await run(argsFor(output));
-      const manifest = await readManifest(fontstackDirectory);
-      await writeManifest(fontstackDirectory, { ...manifest!, ranges: 'all-bmp' });
+      await run([config]);
+      const manifest = await readManifest(fontstackDir());
+      await writeManifest(fontstackDir(), { ...manifest!, ranges: 'all-bmp' });
 
-      await run(argsFor(output));
+      await run([config]);
 
       expect(generate).toHaveBeenCalledTimes(2);
     },
@@ -126,14 +144,30 @@ describe('cli caching', () => {
     'regenerates when the tool version changes',
     async () => {
       const { run, generate } = await loadCli();
-      const output = join(workDir, 'output');
-      const fontstackDirectory = join(output, 'Barlow Regular');
+      const config = await writeConfig();
 
-      await run(argsFor(output));
-      const manifest = await readManifest(fontstackDirectory);
-      await writeManifest(fontstackDirectory, { ...manifest!, toolVersion: '0.0.0-stale' });
+      await run([config]);
+      const manifest = await readManifest(fontstackDir());
+      await writeManifest(fontstackDir(), { ...manifest!, toolVersion: '0.0.0-stale' });
 
-      await run(argsFor(output));
+      await run([config]);
+
+      expect(generate).toHaveBeenCalledTimes(2);
+    },
+    20000,
+  );
+
+  it(
+    'regenerates when the axes change',
+    async () => {
+      const { run, generate } = await loadCli();
+      const config = await writeConfig();
+
+      await run([config]);
+      const manifest = await readManifest(fontstackDir());
+      await writeManifest(fontstackDir(), { ...manifest!, axes: { wght: 700 } });
+
+      await run([config]);
 
       expect(generate).toHaveBeenCalledTimes(2);
     },
@@ -144,16 +178,15 @@ describe('cli caching', () => {
     'regenerates when a generated file was deleted',
     async () => {
       const { run, generate } = await loadCli();
-      const output = join(workDir, 'output');
-      const fontstackDirectory = join(output, 'Barlow Regular');
+      const config = await writeConfig();
 
-      await run(argsFor(output));
-      await rm(join(fontstackDirectory, '0-255.pbf'));
+      await run([config]);
+      await rm(join(fontstackDir(), '0-255.pbf'));
 
-      await run(argsFor(output));
+      await run([config]);
 
       expect(generate).toHaveBeenCalledTimes(2);
-      await expect(access(join(fontstackDirectory, '0-255.pbf'))).resolves.toBeUndefined();
+      await expect(access(join(fontstackDir(), '0-255.pbf'))).resolves.toBeUndefined();
     },
     20000,
   );
@@ -162,16 +195,15 @@ describe('cli caching', () => {
     'regenerates when a generated file was modified on disk',
     async () => {
       const { run, generate } = await loadCli();
-      const output = join(workDir, 'output');
-      const fontstackDirectory = join(output, 'Barlow Regular');
+      const config = await writeConfig();
 
-      await run(argsFor(output));
-      await writeFile(join(fontstackDirectory, '0-255.pbf'), 'corrupted');
+      await run([config]);
+      await writeFile(join(fontstackDir(), '0-255.pbf'), 'corrupted');
 
-      await run(argsFor(output));
+      await run([config]);
 
       expect(generate).toHaveBeenCalledTimes(2);
-      const written = await readFile(join(fontstackDirectory, '0-255.pbf'));
+      const written = await readFile(join(fontstackDir(), '0-255.pbf'));
       const expected = await readFile(new URL('expected/0-255.pbf', fixturesUrl));
       expect(Buffer.compare(written, expected)).toBe(0);
     },
@@ -182,51 +214,17 @@ describe('cli caching', () => {
     'regenerates when its own manifest is corrupt rather than refusing',
     async () => {
       const { run, generate } = await loadCli();
-      const output = join(workDir, 'output');
-      const fontstackDirectory = join(output, 'Barlow Regular');
+      const config = await writeConfig();
 
-      await run(argsFor(output));
-      await writeFile(join(fontstackDirectory, 'fontstack.yaml'), ':::not: valid: yaml:::');
+      await run([config]);
+      await writeFile(join(fontstackDir(), 'fontstack.yaml'), ':::not: valid: yaml:::');
 
-      await run(argsFor(output));
+      await run([config]);
 
       expect(generate).toHaveBeenCalledTimes(2);
-      const manifest = await readManifest(fontstackDirectory);
+      const manifest = await readManifest(fontstackDir());
       expect(manifest).not.toBeNull();
-    },
-    20000,
-  );
-
-  it(
-    'always regenerates with --force even when up to date',
-    async () => {
-      const { run, generate } = await loadCli();
-      const output = join(workDir, 'output');
-
-      await run(argsFor(output));
-      await run(argsFor(output, ['--force']));
-
-      expect(generate).toHaveBeenCalledTimes(2);
-    },
-    20000,
-  );
-
-  it(
-    'refuses a non-empty fontstack folder that has no manifest, then regenerates with --force',
-    async () => {
-      const { run } = await loadCli();
-      const output = join(workDir, 'output');
-      const fontstackDirectory = join(output, 'Barlow Regular');
-      await mkdir(fontstackDirectory, { recursive: true });
-      await writeFile(join(fontstackDirectory, 'foreign.pbf'), 'foreign');
-
-      await expect(run(argsFor(output))).rejects.toThrow(
-        'Refusing to write to non-empty font stack directory',
-      );
-
-      await run(argsFor(output, ['--force']));
-
-      expect((await readdir(fontstackDirectory)).sort()).toEqual(['0-255.pbf', 'fontstack.yaml']);
+      expect((await readdir(fontstackDir())).sort()).toEqual(['0-255.pbf', 'fontstack.yaml']);
     },
     20000,
   );

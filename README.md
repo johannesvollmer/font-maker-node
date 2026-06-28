@@ -35,35 +35,44 @@ The caller is responsible for writing files to disk if desired. The public API d
 
 ## CLI
 
-The same package ships a thin command-line wrapper around `generateGlyphPbfFiles`. It reads a font file, generates the glyphs, and writes them to disk.
+The same package ships a thin command-line wrapper around `generateGlyphPbfFiles`. It takes a single argument: the path to a YAML config file describing what to generate.
 
 ```bash
-npx maplibre-font-maker-node \
-    --font ./fonts/Barlow-Regular.ttf \
-    --fontstack "Barlow Regular" \
-    --output ./dist/fonts \
-    --ranges latin
+npx maplibre-font-maker-node ./font-maker.config.yaml
 ```
 
-This writes the MapLibre-ready layout `<output>/<fontstack>/<start>-<end>.pbf`, e.g. `./dist/fonts/Barlow Regular/0-255.pbf` — exactly the `{fontstack}/{range}.pbf` structure MapLibre's `glyphs` URL expects. Output directories are created automatically.
+The config has a shared `output` directory and a list of font stacks to generate:
 
-| Option | Description |
+```yaml
+output: ./dist/fonts
+fontstacks:
+  - font: ./fonts/Inter.woff2
+    fontstack: Inter Bold
+    ranges: latin          # optional: basic-latin | latin | all-bmp (default: latin)
+    axes:                  # optional: variable-font axes (4-char tag -> number)
+      wght: 700
+  - font: ./fonts/Inter.woff2
+    fontstack: Inter Regular
+    axes: { wght: 400 }
+```
+
+This writes the MapLibre-ready layout `<output>/<fontstack>/<start>-<end>.pbf`, e.g. `./dist/fonts/Inter Bold/0-255.pbf` — exactly the `{fontstack}/{range}.pbf` structure MapLibre's `glyphs` URL expects. Output directories are created automatically.
+
+| Field | Description |
 | --- | --- |
-| `--font <path>` | Input font file (TTF, OTF, WOFF, or WOFF2). Required. |
-| `--fontstack <name>` | MapLibre font stack name. Required. |
-| `--output <dir>` | Output directory. Required. |
-| `--ranges <preset>` | Glyph range preset: `basic-latin`, `latin`, or `all-bmp`. Default: `latin`. |
-| `--force` | Regenerate even when the cached output is already up to date. |
-| `--help` | Show usage. |
-| `--version` | Show the package version. |
+| `output` | Output directory shared by all font stacks. Required. |
+| `fontstacks[].font` | Input font file (TTF, OTF, WOFF, or WOFF2). Required. |
+| `fontstacks[].fontstack` | MapLibre font stack name; also the output subfolder. Required and unique. |
+| `fontstacks[].ranges` | Glyph range preset: `basic-latin`, `latin`, or `all-bmp`. Default: `latin`. |
+| `fontstacks[].axes` | Variable-font axis settings, e.g. `{ wght: 700, wdth: 100 }`. The font is pinned to that instance before generating. Optional. |
 
-The CLI exits with code `1` on any failure (missing argument, font not found, invalid preset, generation error), so it fails the surrounding script in CI.
+Relative `font` and `output` paths resolve against the config file's directory. The CLI also accepts `--help` and `--version`. It exits with code `1` on any failure (missing/invalid config, font not found, generation error), so it fails the surrounding script in CI.
 
 ### Caching
 
-Each run writes a `fontstack.yaml` manifest into `<output>/<fontstack>/` recording the font hash, fontstack, ranges, tool version, and a hash of every generated file. On the next run the command **skips generation** when all of those are unchanged and every output file is still intact, and **regenerates automatically** when any input changes or an output file is missing or modified. Pass `--force` to regenerate unconditionally.
+Each font stack folder gets a `fontstack.yaml` manifest recording the font hash, fontstack, ranges, axes, tool version, and a hash of every generated file. On the next run the command **skips generation** when all of those are unchanged and every output file is still intact, and **regenerates automatically** when any input changes (including a changed axis value) or an output file is missing or modified.
 
-For safety, the command **refuses to write into a non-empty fontstack folder that has no manifest** (i.e. content it didn't create) unless you pass `--force`. Other files and folders in the output directory — including other fontstacks — are never touched.
+For safety, the command **refuses to write into a non-empty fontstack folder that has no manifest** (i.e. content it didn't create); delete the folder to regenerate. Other files and folders in the output directory — including other font stacks — are never touched.
 
 ### Use it as a build step
 
@@ -72,12 +81,12 @@ Because npm exposes the binary on `node_modules/.bin`, you can call it by name f
 ```json
 {
   "scripts": {
-    "prebuild": "maplibre-font-maker-node --font ./fonts/Barlow-Regular.ttf --fontstack \"Barlow Regular\" --output ./dist/fonts --ranges latin"
+    "prebuild": "maplibre-font-maker-node ./font-maker.config.yaml"
   }
 }
 ```
 
-`prebuild` runs automatically before `build`. Thanks to the manifest cache, repeated builds are a fast no-op when the font and options are unchanged, and regenerate automatically when you swap the font or change the ranges — no `--force` needed. Each invocation handles one font; chain multiple commands with `&&` for several font stacks.
+`prebuild` runs automatically before `build`. Thanks to the manifest cache, repeated builds are a fast no-op when the config and fonts are unchanged, and regenerate automatically when you swap a font or change ranges or axes. List every font stack in the one config file — no need to chain commands.
 
 ## API
 

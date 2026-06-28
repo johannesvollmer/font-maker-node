@@ -1,36 +1,20 @@
 import { parseArgs } from 'node:util';
 
-import { RANGE_PRESETS } from './resolve-ranges.js';
-
-export interface CliOptions {
-  font: string;
-  fontstack: string;
-  output: string;
-  ranges: string;
-  force: boolean;
-}
-
 export type ParsedArgs =
   | { kind: 'help' }
   | { kind: 'version' }
-  | { kind: 'run'; options: CliOptions };
-
-const DEFAULT_RANGES = 'latin';
+  | { kind: 'run'; configPath: string };
 
 export function parseCliArgs(argv: string[]): ParsedArgs {
   let values;
+  let positionals;
 
   try {
-    ({ values } = parseArgs({
+    ({ values, positionals } = parseArgs({
       args: argv,
-      allowPositionals: false,
+      allowPositionals: true,
       strict: true,
       options: {
-        font: { type: 'string' },
-        fontstack: { type: 'string' },
-        output: { type: 'string' },
-        ranges: { type: 'string', default: DEFAULT_RANGES },
-        force: { type: 'boolean', default: false },
         help: { type: 'boolean', default: false },
         version: { type: 'boolean', default: false },
       },
@@ -47,27 +31,15 @@ export function parseCliArgs(argv: string[]): ParsedArgs {
     return { kind: 'version' };
   }
 
-  const font = requireOption(values.font, 'font');
-  const fontstack = requireOption(values.fontstack, 'fontstack');
-  const output = requireOption(values.output, 'output');
-  const ranges = values.ranges ?? DEFAULT_RANGES;
+  if (positionals.length === 0) {
+    throw new Error('Missing required config file path.');
+  }
 
-  if (!RANGE_PRESETS.includes(ranges)) {
+  if (positionals.length > 1) {
     throw new Error(
-      `Invalid --ranges preset "${ranges}". Valid presets are: ${RANGE_PRESETS.join(', ')}.`,
+      `Expected a single config file path, but received ${positionals.length} arguments.`,
     );
   }
 
-  return {
-    kind: 'run',
-    options: { font, fontstack, output, ranges, force: values.force ?? false },
-  };
-}
-
-function requireOption(value: string | undefined, name: string): string {
-  if (typeof value !== 'string' || value.length === 0) {
-    throw new Error(`Missing required option --${name}.`);
-  }
-
-  return value;
+  return { kind: 'run', configPath: positionals[0]! };
 }

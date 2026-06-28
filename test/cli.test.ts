@@ -1,8 +1,9 @@
-import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, copyFile, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { stringify as stringifyYaml } from 'yaml';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const fixturesUrl = new URL('./fixtures/', import.meta.url);
@@ -20,157 +21,211 @@ afterEach(async () => {
   vi.resetModules();
 });
 
+async function writeConfig(config: unknown): Promise<string> {
+  const path = join(workDir, 'config.yaml');
+  await writeFile(path, stringifyYaml(config));
+  return path;
+}
+
+async function writeRawConfig(text: string): Promise<string> {
+  const path = join(workDir, 'config.yaml');
+  await writeFile(path, text);
+  return path;
+}
+
 describe('cli', () => {
-  it('generates files into the output directory', async () => {
+  it('generates files for a single fontstack', async () => {
     const { run } = await import('../src/cli.js');
     const output = join(workDir, 'output');
-
-    await run([
-      '--font',
-      barlowPath,
-      '--fontstack',
-      'Barlow Regular',
-      '--output',
+    const config = await writeConfig({
       output,
-      '--ranges',
-      'basic-latin',
-    ]);
+      fontstacks: [{ font: barlowPath, fontstack: 'Barlow Regular', ranges: 'basic-latin' }],
+    });
+
+    await run([config]);
 
     const written = await readFile(join(output, 'Barlow Regular', '0-255.pbf'));
     const expected = await readFile(new URL('expected/0-255.pbf', fixturesUrl));
     expect(Buffer.compare(written, expected)).toBe(0);
   });
 
-  it('fails when an output file already exists without --force', async () => {
+  it('generates multiple fontstacks into a shared output directory', async () => {
     const { run } = await import('../src/cli.js');
     const output = join(workDir, 'output');
-    await mkdir(join(output, 'Barlow Regular'), { recursive: true });
-    await writeFile(join(output, 'Barlow Regular', '0-255.pbf'), 'stale');
+    const config = await writeConfig({
+      output,
+      fontstacks: [
+        { font: barlowPath, fontstack: 'Barlow Regular', ranges: 'basic-latin' },
+        { font: barlowPath, fontstack: 'Barlow Copy', ranges: 'basic-latin' },
+      ],
+    });
 
-    await expect(
-      run(['--font', barlowPath, '--fontstack', 'Barlow Regular', '--output', output, '--ranges', 'basic-latin']),
-    ).rejects.toThrow('Refusing to write to non-empty font stack directory');
+    await run([config]);
+
+    expect((await readdir(join(output, 'Barlow Regular'))).sort()).toEqual([
+      '0-255.pbf',
+      'fontstack.yaml',
+    ]);
+    expect((await readdir(join(output, 'Barlow Copy'))).sort()).toEqual([
+      '0-255.pbf',
+      'fontstack.yaml',
+    ]);
   });
 
-  it('removes stale range files when --force generates fewer ranges, leaving siblings untouched', async () => {
+  it('resolves relative font and output paths against the config directory', async () => {
+    const { run } = await import('../src/cli.js');
+    await copyFile(barlowPath, join(workDir, 'font.ttf'));
+    const config = await writeConfig({
+      output: './out',
+      fontstacks: [{ font: './font.ttf', fontstack: 'Barlow Regular', ranges: 'basic-latin' }],
+    });
+
+    await run([config]);
+
+    await expect(
+      access(join(workDir, 'out', 'Barlow Regular', '0-255.pbf')),
+    ).resolves.toBeUndefined();
+  });
+
+  it('leaves sibling files and other fontstacks untouched', async () => {
     const { run } = await import('../src/cli.js');
     const output = join(workDir, 'output');
-    const fontstackDirectory = join(output, 'Barlow Regular');
-    await mkdir(fontstackDirectory, { recursive: true });
-    await writeFile(join(fontstackDirectory, '0-255.pbf'), 'stale');
-    await writeFile(join(fontstackDirectory, '256-511.pbf'), 'stale');
-    await writeFile(join(fontstackDirectory, '512-767.pbf'), 'stale');
-
+    await mkdir(output, { recursive: true });
     await writeFile(join(output, 'unrelated.txt'), 'keep');
     await mkdir(join(output, 'Legacy Stack'));
     await writeFile(join(output, 'Legacy Stack', '0-255.pbf'), 'keep');
 
-    await run([
-      '--font',
-      barlowPath,
-      '--fontstack',
-      'Barlow Regular',
-      '--output',
+    const config = await writeConfig({
       output,
-      '--ranges',
-      'basic-latin',
-      '--force',
-    ]);
+      fontstacks: [{ font: barlowPath, fontstack: 'Barlow Regular', ranges: 'basic-latin' }],
+    });
 
-    expect((await readdir(fontstackDirectory)).sort()).toEqual(['0-255.pbf', 'fontstack.yaml']);
+    await run([config]);
+
     expect((await readdir(output)).sort()).toEqual(['Barlow Regular', 'Legacy Stack', 'unrelated.txt']);
     expect(await readFile(join(output, 'unrelated.txt'), 'utf8')).toBe('keep');
     expect(await readFile(join(output, 'Legacy Stack', '0-255.pbf'), 'utf8')).toBe('keep');
   });
 
-  it('fails without --force before writing when the font stack directory is not empty', async () => {
+  it('refuses a non-empty fontstack folder that has no manifest', async () => {
     const { run } = await import('../src/cli.js');
     const output = join(workDir, 'output');
     const fontstackDirectory = join(output, 'Barlow Regular');
     await mkdir(fontstackDirectory, { recursive: true });
-    await writeFile(join(fontstackDirectory, 'leftover.pbf'), 'stale');
+    await writeFile(join(fontstackDirectory, 'foreign.pbf'), 'foreign');
 
-    await writeFile(join(output, 'unrelated.txt'), 'keep');
+    const config = await writeConfig({
+      output,
+      fontstacks: [{ font: barlowPath, fontstack: 'Barlow Regular', ranges: 'basic-latin' }],
+    });
 
-    await expect(
-      run(['--font', barlowPath, '--fontstack', 'Barlow Regular', '--output', output, '--ranges', 'basic-latin']),
-    ).rejects.toThrow('Refusing to write to non-empty font stack directory');
+    await expect(run([config])).rejects.toThrow('Refusing to write to non-empty font stack directory');
+    expect((await readdir(fontstackDirectory)).sort()).toEqual(['foreign.pbf']);
+  });
+});
 
-    expect((await readdir(fontstackDirectory)).sort()).toEqual(['leftover.pbf']);
-    expect(await readFile(join(output, 'unrelated.txt'), 'utf8')).toBe('keep');
+describe('cli argument and config validation', () => {
+  it('requires a config file path', async () => {
+    const { run } = await import('../src/cli.js');
+    await expect(run([])).rejects.toThrow('Missing required config file path');
   });
 
-  it('writes without --force when the font stack directory is empty even if siblings exist', async () => {
+  it('reports a missing config file', async () => {
     const { run } = await import('../src/cli.js');
-    const output = join(workDir, 'output');
-    await mkdir(output, { recursive: true });
-    await writeFile(join(output, 'unrelated.txt'), 'keep');
-    await mkdir(join(output, 'Other Stack'));
-
-    await run(['--font', barlowPath, '--fontstack', 'Barlow Regular', '--output', output, '--ranges', 'basic-latin']);
-
-    expect((await readdir(join(output, 'Barlow Regular'))).sort()).toEqual(['0-255.pbf', 'fontstack.yaml']);
-    expect(await readFile(join(output, 'unrelated.txt'), 'utf8')).toBe('keep');
+    await expect(run([join(workDir, 'nope.yaml')])).rejects.toThrow('Config file not found');
   });
 
-  it('overwrites existing files with --force', async () => {
+  it('reports malformed YAML', async () => {
     const { run } = await import('../src/cli.js');
-    const output = join(workDir, 'output');
-    await mkdir(join(output, 'Barlow Regular'), { recursive: true });
-    await writeFile(join(output, 'Barlow Regular', '0-255.pbf'), 'stale');
-
-    await expect(
-      run([
-        '--font',
-        barlowPath,
-        '--fontstack',
-        'Barlow Regular',
-        '--output',
-        output,
-        '--ranges',
-        'basic-latin',
-        '--force',
-      ]),
-    ).resolves.toBeUndefined();
-
-    const written = await readFile(join(output, 'Barlow Regular', '0-255.pbf'));
-    const expected = await readFile(new URL('expected/0-255.pbf', fixturesUrl));
-    expect(Buffer.compare(written, expected)).toBe(0);
+    const config = await writeRawConfig('fontstacks: [');
+    await expect(run([config])).rejects.toThrow('Failed to parse config file');
   });
 
-  it('reports missing required arguments', async () => {
+  it('requires a top-level mapping', async () => {
     const { run } = await import('../src/cli.js');
-
-    await expect(run(['--fontstack', 'Barlow Regular', '--output', workDir])).rejects.toThrow(
-      'Missing required option --font',
-    );
-    await expect(run(['--font', barlowPath, '--output', workDir])).rejects.toThrow(
-      'Missing required option --fontstack',
-    );
-    await expect(run(['--font', barlowPath, '--fontstack', 'Barlow Regular'])).rejects.toThrow(
-      'Missing required option --output',
-    );
+    const config = await writeRawConfig('- one\n- two\n');
+    await expect(run([config])).rejects.toThrow('must contain a YAML mapping');
   });
 
-  it('rejects an invalid range preset', async () => {
+  it('requires output', async () => {
     const { run } = await import('../src/cli.js');
+    const config = await writeConfig({
+      fontstacks: [{ font: barlowPath, fontstack: 'Barlow Regular' }],
+    });
+    await expect(run([config])).rejects.toThrow('output must be a non-empty string');
+  });
 
-    await expect(
-      run(['--font', barlowPath, '--fontstack', 'Barlow Regular', '--output', workDir, '--ranges', 'foobar']),
-    ).rejects.toThrow('Invalid --ranges preset "foobar"');
+  it('requires a non-empty fontstacks array', async () => {
+    const { run } = await import('../src/cli.js');
+    const config = await writeConfig({ output: join(workDir, 'output'), fontstacks: [] });
+    await expect(run([config])).rejects.toThrow('fontstacks must be a non-empty array');
+  });
+
+  it('requires font and fontstack per entry', async () => {
+    const { run } = await import('../src/cli.js');
+    const missingFont = await writeConfig({
+      output: join(workDir, 'output'),
+      fontstacks: [{ fontstack: 'Barlow Regular' }],
+    });
+    await expect(run([missingFont])).rejects.toThrow('fontstacks[0].font must be a non-empty string');
+
+    const missingName = await writeConfig({
+      output: join(workDir, 'output'),
+      fontstacks: [{ font: barlowPath }],
+    });
+    await expect(run([missingName])).rejects.toThrow('fontstacks[0].fontstack must be a non-empty string');
+  });
+
+  it('rejects an invalid ranges preset', async () => {
+    const { run } = await import('../src/cli.js');
+    const config = await writeConfig({
+      output: join(workDir, 'output'),
+      fontstacks: [{ font: barlowPath, fontstack: 'Barlow Regular', ranges: 'foobar' }],
+    });
+    await expect(run([config])).rejects.toThrow('fontstacks[0].ranges must be one of');
+  });
+
+  it('rejects an invalid axis tag', async () => {
+    const { run } = await import('../src/cli.js');
+    const config = await writeConfig({
+      output: join(workDir, 'output'),
+      fontstacks: [{ font: barlowPath, fontstack: 'Barlow Regular', axes: { weight: 400 } }],
+    });
+    await expect(run([config])).rejects.toThrow('Invalid variation axis tag');
+  });
+
+  it('rejects duplicate fontstack names', async () => {
+    const { run } = await import('../src/cli.js');
+    const config = await writeConfig({
+      output: join(workDir, 'output'),
+      fontstacks: [
+        { font: barlowPath, fontstack: 'Barlow Regular' },
+        { font: barlowPath, fontstack: 'Barlow Regular' },
+      ],
+    });
+    await expect(run([config])).rejects.toThrow('Duplicate fontstack name');
+  });
+
+  it('reports a missing font file', async () => {
+    const { run } = await import('../src/cli.js');
+    const config = await writeConfig({
+      output: join(workDir, 'output'),
+      fontstacks: [{ font: join(workDir, 'missing.ttf'), fontstack: 'Barlow Regular', ranges: 'basic-latin' }],
+    });
+    await expect(run([config])).rejects.toThrow('Font file not found');
   });
 });
 
 describe('cli library forwarding', () => {
-  it('forwards font bytes, fontstack, and ranges to generateGlyphPbfFiles', async () => {
+  it('forwards font bytes, fontstack, ranges, and axes to generateGlyphPbfFiles', async () => {
     interface GenerateCall {
       fontstack: string;
-      fonts: { name: string; bytes: Uint8Array }[];
+      fonts: { name: string; bytes: Uint8Array; settings?: Record<string, number> }[];
       ranges: { start: number; end: number }[];
     }
 
-    const generateGlyphPbfFiles = vi.fn(async (_options: GenerateCall) => [
-      { filename: 'Barlow Regular/0-255.pbf', bytes: new Uint8Array([1, 2, 3]) },
+    const generateGlyphPbfFiles = vi.fn(async (options: GenerateCall) => [
+      { filename: `${options.fontstack}/0-255.pbf`, bytes: new Uint8Array([1, 2, 3]) },
     ]);
 
     vi.doMock('../src/index.js', async (importActual) => {
@@ -180,21 +235,27 @@ describe('cli library forwarding', () => {
 
     const { run } = await import('../src/cli.js');
     const output = join(workDir, 'output');
+    const config = await writeConfig({
+      output,
+      fontstacks: [
+        { font: barlowPath, fontstack: 'With Axes', ranges: 'basic-latin', axes: { wght: 700 } },
+        { font: barlowPath, fontstack: 'No Axes', ranges: 'basic-latin' },
+      ],
+    });
 
-    await run(['--font', barlowPath, '--fontstack', 'Barlow Regular', '--output', output, '--ranges', 'basic-latin']);
+    await run([config]);
 
     const fontBytes = new Uint8Array(await readFile(barlowPath));
-    expect(generateGlyphPbfFiles).toHaveBeenCalledTimes(1);
+    expect(generateGlyphPbfFiles).toHaveBeenCalledTimes(2);
 
-    const call = generateGlyphPbfFiles.mock.calls[0]![0];
+    const withAxes = generateGlyphPbfFiles.mock.calls[0]![0];
+    expect(withAxes.fontstack).toBe('With Axes');
+    expect(Buffer.compare(Buffer.from(withAxes.fonts[0]!.bytes), Buffer.from(fontBytes))).toBe(0);
+    expect(withAxes.ranges).toEqual([{ start: 0, end: 255 }]);
+    expect(withAxes.fonts[0]!.settings).toEqual({ wght: 700 });
 
-    expect(call.fontstack).toBe('Barlow Regular');
-    expect(call.fonts).toHaveLength(1);
-    expect(call.fonts[0]!.name).toBe('Barlow Regular');
-    expect(Buffer.compare(Buffer.from(call.fonts[0]!.bytes), Buffer.from(fontBytes))).toBe(0);
-    expect(call.ranges).toEqual([{ start: 0, end: 255 }]);
-
-    const written = await readFile(join(output, 'Barlow Regular', '0-255.pbf'));
-    expect(Buffer.compare(written, Buffer.from([1, 2, 3]))).toBe(0);
+    const noAxes = generateGlyphPbfFiles.mock.calls[1]![0];
+    expect(noAxes.fontstack).toBe('No Axes');
+    expect(noAxes.fonts[0]!.settings).toBeUndefined();
   });
 });

@@ -4,7 +4,7 @@ import { basename, join } from 'node:path';
 
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 
-import type { GeneratedGlyphPbfFile } from '../index.js';
+import type { FontVariationSettings, GeneratedGlyphPbfFile } from '../index.js';
 
 export const MANIFEST_FILENAME = 'fontstack.yaml';
 
@@ -15,6 +15,7 @@ export interface ManifestInputs {
   toolVersion: string;
   fontstack: string;
   ranges: string;
+  axes: FontVariationSettings;
   fontSha256: string;
 }
 
@@ -39,6 +40,7 @@ export function buildManifest(inputs: ManifestInputs, files: GeneratedGlyphPbfFi
     toolVersion: inputs.toolVersion,
     fontstack: inputs.fontstack,
     ranges: inputs.ranges,
+    axes: inputs.axes,
     fontSha256: inputs.fontSha256,
     files: fileHashes,
   };
@@ -85,7 +87,8 @@ export async function isUpToDate(
     manifest.toolVersion !== inputs.toolVersion ||
     manifest.fontstack !== inputs.fontstack ||
     manifest.ranges !== inputs.ranges ||
-    manifest.fontSha256 !== inputs.fontSha256
+    manifest.fontSha256 !== inputs.fontSha256 ||
+    canonicalAxes(manifest.axes) !== canonicalAxes(inputs.axes)
   ) {
     return false;
   }
@@ -142,7 +145,37 @@ function asManifest(value: unknown): Manifest {
     toolVersion: candidate.toolVersion,
     fontstack: candidate.fontstack,
     ranges: candidate.ranges,
+    axes: asAxes(candidate.axes),
     fontSha256: candidate.fontSha256,
     files: fileHashes,
   };
+}
+
+// Older manifests predate axis support, so a missing block means "no axes".
+function asAxes(value: unknown): FontVariationSettings {
+  if (value === undefined || value === null) {
+    return {};
+  }
+
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Manifest axes must be an object.');
+  }
+
+  const axes: FontVariationSettings = {};
+
+  for (const [tag, axisValue] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof axisValue !== 'number' || !Number.isFinite(axisValue)) {
+      throw new Error(`Manifest axis "${tag}" is not a finite number.`);
+    }
+
+    axes[tag] = axisValue;
+  }
+
+  return axes;
+}
+
+// Stable key order so axis maps compare equal regardless of how they were written.
+function canonicalAxes(axes: FontVariationSettings): string {
+  const sorted = Object.entries(axes).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return JSON.stringify(Object.fromEntries(sorted));
 }
