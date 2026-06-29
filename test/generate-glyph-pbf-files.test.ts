@@ -95,7 +95,7 @@ describe('generateGlyphPbfFiles', () => {
   });
 
   it('applies per-font variation settings while normalizing WOFF2 input', async () => {
-    const interWoff2 = new Uint8Array(await readFile(new URL('Inter-Variable.woff2', fixturesUrl)));
+    const interWoff2 = new Uint8Array(await readFile(new URL('Inter-Latin-Variable.woff2', fixturesUrl)));
 
     expect(getSignature(interWoff2)).toBe('wOF2');
 
