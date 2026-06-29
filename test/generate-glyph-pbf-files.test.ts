@@ -1,7 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
 
-import { subset } from '@web-alchemy/fonttools';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -67,10 +66,9 @@ describe('generateGlyphPbfFiles', () => {
   });
 
   it('automatically normalizes WOFF and WOFF2 font bytes before generation', async () => {
-    const ttfBytes = new Uint8Array(await readFile(new URL('Barlow-Regular.ttf', fixturesUrl)));
     const [woffBytes, woff2Bytes] = await Promise.all([
-      subset(ttfBytes, { '*': true, flavor: 'woff' }),
-      subset(ttfBytes, { '*': true, flavor: 'woff2' }),
+      readFile(new URL('Barlow-Regular.woff', fixturesUrl)).then((b) => new Uint8Array(b)),
+      readFile(new URL('Barlow-Regular.woff2', fixturesUrl)).then((b) => new Uint8Array(b)),
     ]);
 
     expect(getSignature(woffBytes)).toBe('wOFF');

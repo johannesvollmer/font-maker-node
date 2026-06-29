@@ -1,4 +1,4 @@
-import { instantiateVariableFont, subset } from '@web-alchemy/fonttools';
+import subsetFont from 'subset-font';
 import { z } from 'zod';
 
 import { nonEmptyString } from './validation.js';
@@ -48,12 +48,12 @@ export function isSupportedFontInput(bytes: Uint8Array): boolean {
   return hasSupportedSfntSignature(bytes) || isWoff(bytes) || isWoff2(bytes);
 }
 
-export async function normalizeFontInput(font: FontInput): Promise<FontInput> {
+export async function normalizeFontInput(font: FontInput, codepointText: string): Promise<FontInput> {
   if (!needsNormalization(font)) {
     return font;
   }
 
-  const bytes = await normalizeWithFontTools(font.bytes, font.settings ?? {});
+  const bytes = await normalizeToSfnt(font.bytes, font.settings ?? {}, codepointText);
 
   if (!hasSupportedSfntSignature(bytes)) {
     throw new Error(`Failed to normalize font "${font.name}": normalized bytes are not a supported TTF or OTF font.`);
@@ -69,20 +69,22 @@ function needsNormalization(font: FontInput): boolean {
   return isWoff(font.bytes) || isWoff2(font.bytes) || font.settings !== undefined;
 }
 
-async function normalizeWithFontTools(bytes: Uint8Array, settings: FontVariationSettings): Promise<Uint8Array> {
-  let result: Uint8Array = bytes;
+// hb-subset reads WOFF/WOFF2 and TTF/OTF, optionally pins variable axes to a static
+// instance, and emits plain SFNT — the only format the WASM accepts. We subset to just
+// the requested codepoints (the caller always supplies ranges), which keeps every glyph
+// the generator can render while staying fast. hb-subset preserves retained-glyph
+// outlines exactly, so SDF output is identical to subsetting the full font.
+async function normalizeToSfnt(
+  bytes: Uint8Array,
+  settings: FontVariationSettings,
+  codepointText: string,
+): Promise<Uint8Array> {
+  const hasAxes = Object.keys(settings).length > 0;
 
-  // Pin variable axes to the requested location, collapsing the font to a static
-  // instance. fontTools raises if the font is not variable or an axis/value is invalid.
-  if (Object.keys(settings).length > 0) {
-    result = await instantiateVariableFont(result, settings);
-  }
-
-  // Instancing preserves the input flavor and the WASM only accepts plain SFNT, so
-  // decompress any WOFF/WOFF2 to TTF/OTF. A wildcard subset retains every glyph.
-  if (isWoff(result) || isWoff2(result)) {
-    result = await subset(result, { '*': true });
-  }
+  const result = await subsetFont(Buffer.from(bytes), codepointText, {
+    targetFormat: 'sfnt',
+    ...(hasAxes ? { variationAxes: settings } : {}),
+  });
 
   return new Uint8Array(result);
 }

@@ -74,7 +74,7 @@ export async function generateGlyphPbfFiles(
   options: GenerateGlyphPbfFilesOptions,
 ): Promise<GeneratedGlyphPbfFile[]> {
   const { fontstack, fonts, ranges } = parse(GenerateGlyphPbfFilesOptionsSchema, options);
-  const normalizedFonts = await normalizeFonts(fonts);
+  const normalizedFonts = await normalizeFonts(fonts, rangesToCodepointText(ranges));
   const module = await initializeWasm();
 
   let fontstackPtr: Pointer | undefined;
@@ -163,12 +163,31 @@ function generateRange(
   }
 }
 
-async function normalizeFonts(fonts: FontInput[]): Promise<FontInput[]> {
+async function normalizeFonts(fonts: FontInput[], codepointText: string): Promise<FontInput[]> {
   try {
-    return await Promise.all(fonts.map((font) => normalizeFontInput(font)));
+    return await Promise.all(fonts.map((font) => normalizeFontInput(font, codepointText)));
   } catch (error) {
     throw new Error(`Failed to normalize font input: ${formatError(error)}`);
   }
+}
+
+// The set of codepoints to retain when normalizing a font: every codepoint across the
+// requested ranges, skipping the UTF-16 surrogate block (no font carries glyphs there and
+// lone surrogates are not valid characters). subset-font takes the retained set as text.
+function rangesToCodepointText(ranges: GlyphRange[]): string {
+  let text = '';
+
+  for (const { start, end } of ranges) {
+    for (let codepoint = start; codepoint <= end; codepoint += 1) {
+      if (codepoint >= 0xd800 && codepoint <= 0xdfff) {
+        continue;
+      }
+
+      text += String.fromCodePoint(codepoint);
+    }
+  }
+
+  return text;
 }
 
 function formatRange(range: GlyphRange): string {
