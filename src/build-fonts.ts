@@ -1,8 +1,10 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { z } from 'zod';
+
+import { FontVariationSettingsSchema } from './font-normalization.js';
 import { generateGlyphPbfFiles } from './generate-glyph-pbf-files.js';
-import { validateFontVariationSettings } from './font-normalization.js';
 import {
   buildManifest,
   hasManifest,
@@ -13,29 +15,61 @@ import {
 } from './manifest.js';
 import { printGenerated, printRunSummary, printUpToDate } from './print-summary.js';
 import { RANGE_PRESETS, resolveRanges } from './resolve-ranges.js';
+import { nonEmptyString, parse } from './validation.js';
 import { clearFontstackDir, isFontstackDirNonEmpty, writeFiles } from './write-generated-files.js';
 
-import type { FontVariationSettings } from './index.js';
 import type { ManifestInputs } from './manifest.js';
 
 const DEFAULT_RANGES = 'latin';
 
-export interface FontstackSpec {
-  /** Font file path, resolved relative to the process working directory. */
-  font: string;
-  /** MapLibre font stack name; also the output subfolder. */
-  fontstack: string;
-  /** Glyph range preset: basic-latin | latin | all-bmp (default: latin). */
-  ranges?: string;
-  /** Variable-font axis settings, e.g. { wght: 700 }. */
-  axes?: FontVariationSettings;
-}
+const RangesPresetSchema = z
+  .string({ error: `must be one of: ${RANGE_PRESETS.join(', ')}.` })
+  .refine((value) => RANGE_PRESETS.includes(value), {
+    error: `must be one of: ${RANGE_PRESETS.join(', ')}.`,
+  })
+  .default(DEFAULT_RANGES);
 
-export interface BuildFontsOptions {
-  /** Output directory shared by every font stack. */
-  output: string;
-  fontstacks: FontstackSpec[];
-}
+const FontstackSpecSchema = z.object(
+  {
+    font: nonEmptyString(),
+    fontstack: nonEmptyString(),
+    ranges: RangesPresetSchema,
+    axes: FontVariationSettingsSchema.default({}),
+  },
+  { error: 'must be an object' },
+);
+
+const BuildFontsOptionsSchema = z.object(
+  {
+    output: nonEmptyString(),
+    fontstacks: z
+      .array(FontstackSpecSchema, { error: 'must be a non-empty array' })
+      .min(1, { error: 'must be a non-empty array' })
+      .superRefine((fontstacks, ctx) => {
+        const seen = new Set<string>();
+
+        fontstacks.forEach((entry, index) => {
+          if (seen.has(entry.fontstack)) {
+            ctx.addIssue({
+              code: 'custom',
+              path: [index, 'fontstack'],
+              message: `Duplicate fontstack name "${entry.fontstack}". Each fontstack must be unique.`,
+            });
+          }
+
+          seen.add(entry.fontstack);
+        });
+      }),
+  },
+  { error: 'buildFonts requires an options object.' },
+);
+
+/** A single font stack to build. `ranges` defaults to `latin`; `axes` to none. */
+export type FontstackSpec = z.input<typeof FontstackSpecSchema>;
+/** Options for {@link buildFonts}: a shared `output` dir and the stacks to build. */
+export type BuildFontsOptions = z.input<typeof BuildFontsOptionsSchema>;
+
+type NormalizedFontstack = z.infer<typeof FontstackSpecSchema>;
 
 export interface FontstackResult {
   fontstack: string;
@@ -43,15 +77,8 @@ export interface FontstackResult {
   fileCount: number;
 }
 
-interface NormalizedFontstack {
-  font: string;
-  fontstack: string;
-  ranges: string;
-  axes: FontVariationSettings;
-}
-
 export async function buildFonts(options: BuildFontsOptions): Promise<FontstackResult[]> {
-  const { output, fontstacks } = validateOptions(options);
+  const { output, fontstacks } = parse(BuildFontsOptionsSchema, options);
   const toolVersion = await readVersion();
 
   const results: FontstackResult[] = [];
@@ -126,83 +153,6 @@ async function buildFontstack(
 
   printGenerated({ fontstack: entry.fontstack, fileCount: files.length, output });
   return { fontstack: entry.fontstack, status: 'generated', fileCount: files.length };
-}
-
-function validateOptions(options: BuildFontsOptions): {
-  output: string;
-  fontstacks: NormalizedFontstack[];
-} {
-  if (!options || typeof options !== 'object') {
-    throw new TypeError('buildFonts requires an options object.');
-  }
-
-  const output = requireString(options.output, 'output');
-  const fontstacks = requireArray(options.fontstacks, 'fontstacks').map((entry, index) =>
-    normalizeFontstack(entry, index),
-  );
-
-  assertUniqueFontstacks(fontstacks);
-
-  return { output, fontstacks };
-}
-
-function normalizeFontstack(entry: unknown, index: number): NormalizedFontstack {
-  const where = `fontstacks[${index}]`;
-
-  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
-    throw new TypeError(`${where} must be an object.`);
-  }
-
-  const candidate = entry as Record<string, unknown>;
-  const font = requireString(candidate.font, `${where}.font`);
-  const fontstack = requireString(candidate.fontstack, `${where}.fontstack`);
-  const ranges = resolveRangesPreset(candidate.ranges, `${where}.ranges`);
-  const axes = validateFontVariationSettings(
-    candidate.axes as FontVariationSettings | undefined,
-    `${where}.axes`,
-  );
-
-  return { font, fontstack, ranges, axes: axes ?? {} };
-}
-
-function resolveRangesPreset(value: unknown, path: string): string {
-  if (value === undefined || value === null) {
-    return DEFAULT_RANGES;
-  }
-
-  if (typeof value !== 'string' || !RANGE_PRESETS.includes(value)) {
-    throw new Error(`${path} must be one of: ${RANGE_PRESETS.join(', ')}.`);
-  }
-
-  return value;
-}
-
-function assertUniqueFontstacks(fontstacks: NormalizedFontstack[]): void {
-  const seen = new Set<string>();
-
-  for (const { fontstack } of fontstacks) {
-    if (seen.has(fontstack)) {
-      throw new Error(`Duplicate fontstack name "${fontstack}". Each fontstack must be unique.`);
-    }
-
-    seen.add(fontstack);
-  }
-}
-
-function requireString(value: unknown, path: string): string {
-  if (typeof value !== 'string' || value.trim().length === 0) {
-    throw new TypeError(`${path} must be a non-empty string.`);
-  }
-
-  return value;
-}
-
-function requireArray(value: unknown, path: string): unknown[] {
-  if (!Array.isArray(value) || value.length === 0) {
-    throw new TypeError(`${path} must be a non-empty array.`);
-  }
-
-  return value;
 }
 
 async function readFontFile(path: string): Promise<Uint8Array> {

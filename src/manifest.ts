@@ -3,6 +3,9 @@ import { access, readFile, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
+import { z } from 'zod';
+
+import { AxisValuesSchema } from './font-normalization.js';
 
 import type { FontVariationSettings, GeneratedGlyphPbfFile } from './index.js';
 
@@ -67,7 +70,8 @@ export async function readManifest(fontstackDirectory: string): Promise<Manifest
   }
 
   try {
-    return asManifest(parseYaml(raw));
+    const result = ManifestSchema.safeParse(parseYaml(raw));
+    return result.success ? result.data : null;
   } catch {
     return null;
   }
@@ -110,69 +114,18 @@ export async function isUpToDate(
   return true;
 }
 
-function asManifest(value: unknown): Manifest {
-  if (!value || typeof value !== 'object') {
-    throw new Error('Manifest is not an object.');
-  }
-
-  const candidate = value as Record<string, unknown>;
-  const files = candidate.files;
-
-  if (
-    typeof candidate.tool !== 'string' ||
-    typeof candidate.toolVersion !== 'string' ||
-    typeof candidate.fontstack !== 'string' ||
-    typeof candidate.ranges !== 'string' ||
-    typeof candidate.fontSha256 !== 'string' ||
-    !files ||
-    typeof files !== 'object'
-  ) {
-    throw new Error('Manifest is missing required fields.');
-  }
-
-  const fileHashes: Record<string, string> = {};
-
-  for (const [name, hash] of Object.entries(files as Record<string, unknown>)) {
-    if (typeof hash !== 'string') {
-      throw new Error(`Manifest file entry "${name}" is not a string.`);
-    }
-
-    fileHashes[name] = hash;
-  }
-
-  return {
-    tool: candidate.tool,
-    toolVersion: candidate.toolVersion,
-    fontstack: candidate.fontstack,
-    ranges: candidate.ranges,
-    axes: asAxes(candidate.axes),
-    fontSha256: candidate.fontSha256,
-    files: fileHashes,
-  };
-}
-
-// Older manifests predate axis support, so a missing block means "no axes".
-function asAxes(value: unknown): FontVariationSettings {
-  if (value === undefined || value === null) {
-    return {};
-  }
-
-  if (typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('Manifest axes must be an object.');
-  }
-
-  const axes: FontVariationSettings = {};
-
-  for (const [tag, axisValue] of Object.entries(value as Record<string, unknown>)) {
-    if (typeof axisValue !== 'number' || !Number.isFinite(axisValue)) {
-      throw new Error(`Manifest axis "${tag}" is not a finite number.`);
-    }
-
-    axes[tag] = axisValue;
-  }
-
-  return axes;
-}
+// Axis tags in a manifest are not re-checked against the 4-char rule: this tool
+// wrote them, and older manifests predate axis support, so a missing or null
+// block means "no axes".
+const ManifestSchema = z.object({
+  tool: z.string(),
+  toolVersion: z.string(),
+  fontstack: z.string(),
+  ranges: z.string(),
+  axes: z.preprocess((value) => (value === undefined || value === null ? {} : value), AxisValuesSchema),
+  fontSha256: z.string(),
+  files: z.record(z.string(), z.string()),
+});
 
 // Stable key order so axis maps compare equal regardless of how they were written.
 function canonicalAxes(axes: FontVariationSettings): string {

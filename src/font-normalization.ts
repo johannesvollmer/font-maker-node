@@ -1,12 +1,45 @@
 import { instantiateVariableFont, subset } from '@web-alchemy/fonttools';
+import { z } from 'zod';
 
-export type FontVariationSettings = Record<string, number>;
+import { nonEmptyString } from './validation.js';
 
-export interface FontInput {
-  name: string;
-  bytes: Uint8Array;
-  settings?: FontVariationSettings;
-}
+const AXIS_TAG = /^[\x20-\x7e]{4}$/;
+
+// Axis tag/value map with no constraint on tag spelling. Used where tags are
+// already trusted, e.g. manifests this tool wrote itself.
+export const AxisValuesSchema = z.record(z.string(), z.number().finite());
+
+// Author-facing variation settings: requires 4 printable-ASCII characters per
+// axis tag, mirroring the OpenType axis-tag rule.
+export const FontVariationSettingsSchema = AxisValuesSchema.superRefine((axes, ctx) => {
+  for (const tag of Object.keys(axes)) {
+    if (!AXIS_TAG.test(tag)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: [tag],
+        message: `Invalid variation axis tag "${tag}". Axis tags must be 4 printable ASCII characters.`,
+      });
+    }
+  }
+});
+
+export const FontInputSchema = z.object(
+  {
+    name: nonEmptyString(),
+    // z.instanceof would infer Uint8Array<ArrayBufferLike>; z.custom pins the exact
+    // Uint8Array the rest of the codebase passes around.
+    bytes: z
+      .custom<Uint8Array>((value) => value instanceof Uint8Array, { error: 'must be a Uint8Array' })
+      .refine(isSupportedFontInput, {
+        error: 'is not a supported TTF, OTF, WOFF, or WOFF2 font',
+      }),
+    settings: FontVariationSettingsSchema.optional(),
+  },
+  { error: 'must be an object' },
+);
+
+export type FontVariationSettings = z.infer<typeof FontVariationSettingsSchema>;
+export type FontInput = z.infer<typeof FontInputSchema>;
 
 const WOFF_SIGNATURE = 'wOFF';
 const WOFF2_SIGNATURE = 'wOF2';
@@ -30,35 +63,6 @@ export async function normalizeFontInput(font: FontInput): Promise<FontInput> {
     ...font,
     bytes,
   };
-}
-
-export function validateFontVariationSettings(
-  settings: FontVariationSettings | undefined,
-  path: string,
-): FontVariationSettings | undefined {
-  if (settings === undefined) {
-    return undefined;
-  }
-
-  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
-    throw new TypeError(`${path} must be an object mapping 4-character axis tags to numeric values.`);
-  }
-
-  const normalized: FontVariationSettings = {};
-
-  for (const [axisTag, value] of Object.entries(settings)) {
-    if (!isAxisTag(axisTag)) {
-      throw new TypeError(`Invalid variation axis tag "${axisTag}" in ${path}. Axis tags must be 4 printable ASCII characters.`);
-    }
-
-    if (typeof value !== 'number' || !Number.isFinite(value)) {
-      throw new TypeError(`Variation axis "${axisTag}" in ${path} must be a finite number.`);
-    }
-
-    normalized[axisTag] = value;
-  }
-
-  return normalized;
 }
 
 function needsNormalization(font: FontInput): boolean {
@@ -110,8 +114,4 @@ function getSignature(bytes: Uint8Array): string {
   }
 
   return String.fromCharCode(bytes[0]!, bytes[1]!, bytes[2]!, bytes[3]!);
-}
-
-function isAxisTag(value: string): boolean {
-  return /^[\x20-\x7e]{4}$/.test(value);
 }
